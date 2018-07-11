@@ -6,6 +6,8 @@ import re
 import dash_html_components as html
 import dash_core_components as dcc
 import dash_flow_example
+import flask
+
 import dash
 import time
 
@@ -302,18 +304,18 @@ class Tests(IntegrationTests):
         <!DOCTYPE html>
         <html>
             <head>
-                {metas}
-                <title>{title}</title>
-                {favicon}
-                {css}
+                {%metas%}
+                <title>{%title%}</title>
+                {%favicon%}
+                {%css%}
             </head>
             <body>
                 <div id="custom-header">My custom header</div>
                 <div id="add"></div>
-                {app_entry}
+                {%app_entry%}
                 <footer>
-                    {config}
-                    {scripts}
+                    {%config%}
+                    {%scripts%}
                 </footer>
                 <div id="custom-footer">My custom footer</div>
                 <script>
@@ -323,6 +325,9 @@ class Tests(IntegrationTests):
                     throw Error('could not find container to add');
                 }
                 elem.innerHTML = 'Got added';
+                var config = {};
+                fetch('/nonexist').then(r => r.json())
+                    .then(r => config = r).catch(err => ({config}));
                 </script>
             </body>
         </html>
@@ -352,16 +357,16 @@ class Tests(IntegrationTests):
         <!DOCTYPE html>
         <html>
             <head>
-                {metas}
-                <title>{title}</title>
-                {css}
+                {%metas%}
+                <title>{%title%}</title>
+                {%css%}
             </head>
             <body>
                 <div id="tested"></div>
-                {app_entry}
+                {%app_entry%}
                 <footer>
-                    {config}
-                    {scripts}
+                    {%config%}
+                    {%scripts%}
                 </footer>
             </body>
         </html>
@@ -393,3 +398,69 @@ class Tests(IntegrationTests):
             self.assertEqual(order[i], tested[i])
 
         self.percy_snapshot('test assets includes')
+
+    def test_invalid_index(self):
+        app = dash.Dash()
+
+        def will_raise():
+            app.index_string = '''
+                    <!DOCTYPE html>
+                    <html>
+                        <head>
+                            {%metas%}
+                            <title>{%title%}</title>
+                            {%favicon%}
+                            {%css%}
+                        </head>
+                        <body>
+                            <div id="custom-header">My custom header</div>
+                            <div id="add"></div>
+                            <footer>
+                            </footer>
+                        </body>
+                    </html>
+                    '''
+
+        with self.assertRaises(Exception) as context:
+            will_raise()
+
+        exc_msg = str(context.exception)
+        self.assertTrue('{%app_entry%}' in exc_msg)
+        self.assertTrue('{%config%}' in exc_msg)
+        self.assertTrue('{%scripts%}' in exc_msg)
+
+        failed = Value('i', 0)
+
+        class TestDash(dash.Dash):
+
+            def index(self, *args, **kwargs):
+                try:
+                    super(TestDash, self).index(*args, **kwargs)
+                except Exception:
+                    # it tries to get the favicon here...
+                    if flask.request.path == self.config.routes_pathname_prefix:
+                        failed.value += 1
+                return ''
+
+            def interpolate_index(self,
+                                  metas, title, css, config,
+                                  scripts, app_entry, favicon):
+                return '''
+                <!DOCTYPE html>
+                <html>
+                    <head>
+                        <title>My App</title>
+                    </head>
+                    <body>
+                        <div id="custom-header">My custom header</div>
+                        <div id="custom-footer">My custom footer</div>
+                    </body>
+                </html>
+                '''
+
+        app = TestDash()
+
+        app.layout = html.Div()
+        self.startServer(app)
+
+        self.assertEqual(1, failed.value)
